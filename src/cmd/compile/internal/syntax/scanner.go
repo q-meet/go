@@ -85,6 +85,7 @@ func (s *scanner) setLit(kind LitKind, ok bool) {
 // If the scanner mode includes the directives (but not the comments)
 // flag, only comments containing a //line, /*line, or //go: directive
 // are reported, in the same way as regular comments.
+// 不断地读取下一个字符（不是下一个字节，因为 Go 语言支持 Unicode 编码，并不是像我们前面举得 ASCII 码的例子，一个字符只有一个字节），直到这些字符可以构成一个 Token
 func (s *scanner) next() {
 	nlsemi := s.nlsemi
 	s.nlsemi = false

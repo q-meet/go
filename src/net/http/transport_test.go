@@ -5314,6 +5314,7 @@ func TestMissingStatusNoPanic(t *testing.T) {
 
 	ln := newLocalListener(t)
 	addr := ln.Addr().String()
+	shutdown := make(chan bool, 1)
 	done := make(chan bool)
 	fullAddrURL := fmt.Sprintf("http://%s", addr)
 	raw := "HTTP/1.1 400\r\n" +
@@ -5325,7 +5326,10 @@ func TestMissingStatusNoPanic(t *testing.T) {
 		"Aloha Olaa"
 
 	go func() {
-		defer close(done)
+		defer func() {
+			ln.Close()
+			close(done)
+		}()
 
 		conn, _ := ln.Accept()
 		if conn != nil {
@@ -5356,7 +5360,7 @@ func TestMissingStatusNoPanic(t *testing.T) {
 		t.Errorf("got=%v want=%q", err, want)
 	}
 
-	ln.Close()
+	close(shutdown)
 	<-done
 }
 
@@ -6433,11 +6437,10 @@ func TestErrorWriteLoopRace(t *testing.T) {
 // Test that a new request which uses the connection of an active request
 // cannot cause it to be canceled as well.
 func TestCancelRequestWhenSharingConnection(t *testing.T) {
-	reqc := make(chan chan struct{}, 2)
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
 	ts := httptest.NewServer(HandlerFunc(func(w ResponseWriter, req *Request) {
-		ch := make(chan struct{}, 1)
-		reqc <- ch
-		<-ch
 		w.Header().Add("Content-Length", "0")
 	}))
 	defer ts.Close()
@@ -6449,58 +6452,34 @@ func TestCancelRequestWhenSharingConnection(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	putidlec := make(chan chan struct{})
-	go func() {
-		defer wg.Done()
-		ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
-			PutIdleConn: func(error) {
-				// Signal that the idle conn has been returned to the pool,
-				// and wait for the order to proceed.
-				ch := make(chan struct{})
-				putidlec <- ch
-				<-ch
-			},
-		})
-		req, _ := NewRequestWithContext(ctx, "GET", ts.URL, nil)
-		res, err := client.Do(req)
-		if err == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ctx.Err() == nil {
+				reqctx, reqcancel := context.WithCancel(ctx)
+				go reqcancel()
+				req, _ := NewRequestWithContext(reqctx, "GET", ts.URL, nil)
+				res, err := client.Do(req)
+				if err == nil {
+					res.Body.Close()
+				}
+			}
+		}()
+	}
+
+	for ctx.Err() == nil {
+		req, _ := NewRequest("GET", ts.URL, nil)
+		if res, err := client.Do(req); err != nil {
+			t.Errorf("unexpected: %p %v", req, err)
+			break
+		} else {
 			res.Body.Close()
 		}
-		if err != nil {
-			t.Errorf("request 1: got err %v, want nil", err)
-		}
-	}()
+	}
 
-	// Wait for the first request to receive a response and return the
-	// connection to the idle pool.
-	r1c := <-reqc
-	close(r1c)
-	idlec := <-putidlec
-
-	wg.Add(1)
-	cancelctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		defer wg.Done()
-		req, _ := NewRequestWithContext(cancelctx, "GET", ts.URL, nil)
-		res, err := client.Do(req)
-		if err == nil {
-			res.Body.Close()
-		}
-		if !errors.Is(err, context.Canceled) {
-			t.Errorf("request 2: got err %v, want Canceled", err)
-		}
-	}()
-
-	// Wait for the second request to arrive at the server, and then cancel
-	// the request context.
-	r2c := <-reqc
 	cancel()
-
-	// Give the cancelation a moment to take effect, and then unblock the first request.
-	time.Sleep(1 * time.Millisecond)
-	close(idlec)
-
-	close(r2c)
 	wg.Wait()
 }

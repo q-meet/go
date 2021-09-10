@@ -61,8 +61,6 @@ func runTidy(ctx context.Context, cmd *base.Command, args []string) {
 	modload.ForceUseModules = true
 	modload.RootMode = modload.NeedRoot
 
-	modload.CheckTidyVersion(ctx, tidyE)
-
 	modload.LoadPackages(ctx, modload.PackageOpts{
 		Tags:                     imports.AnyTags(),
 		ResolveMissingImports:    true,

@@ -23,7 +23,9 @@ func throw(string) // provided by runtime
 //
 // A Mutex must not be copied after first use.
 type Mutex struct {
+	//状态  最后一位标识锁是否锁了
 	state int32
+	//信号量 和锁相关的基本上都会有这个成员
 	sema  uint32
 }
 

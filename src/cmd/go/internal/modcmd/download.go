@@ -86,11 +86,9 @@ func runDownload(ctx context.Context, cmd *base.Command, args []string) {
 	if !modload.HasModRoot() && len(args) == 0 {
 		base.Fatalf("go mod download: no modules specified (see 'go help mod download')")
 	}
-	haveExplicitArgs := len(args) > 0
-	if !haveExplicitArgs {
+	if len(args) == 0 {
 		args = []string{"all"}
-	}
-	if modload.HasModRoot() {
+	} else if modload.HasModRoot() {
 		modload.LoadModFile(ctx) // to fill Target
 		targetAtUpgrade := modload.Target.Path + "@upgrade"
 		targetAtPatch := modload.Target.Path + "@patch"
@@ -139,20 +137,7 @@ func runDownload(ctx context.Context, cmd *base.Command, args []string) {
 	listRetractions := false
 	type token struct{}
 	sem := make(chan token, runtime.GOMAXPROCS(0))
-	infos := modload.ListModules(ctx, args, listU, listVersions, listRetractions)
-	if !haveExplicitArgs {
-		// 'go mod download' is sometimes run without arguments to pre-populate
-		// the module cache. It may fetch modules that aren't needed to build
-		// packages in the main mdoule. This is usually not intended, so don't save
-		// sums for downloaded modules (golang.org/issue/45332).
-		// TODO(golang.org/issue/45551): For now, save sums needed to load the
-		// build list (same as 1.15 behavior). In the future, report an error if
-		// go.mod or go.sum need to be updated after loading the build list.
-		modload.WriteGoMod()
-		modload.DisallowWriteGoMod()
-	}
-
-	for _, info := range infos {
+	for _, info := range modload.ListModules(ctx, args, listU, listVersions, listRetractions) {
 		if info.Replace != nil {
 			info = info.Replace
 		}
@@ -202,13 +187,6 @@ func runDownload(ctx context.Context, cmd *base.Command, args []string) {
 		base.ExitIfErrors()
 	}
 
-	// If there were explicit arguments, update go.mod and especially go.sum.
-	// 'go mod download mod@version' is a useful way to add a sum without using
-	// 'go get mod@version', which may have other side effects. We print this in
-	// some error message hints.
-	//
-	// Don't save sums for 'go mod download' without arguments; see comment above.
-	if haveExplicitArgs {
-		modload.WriteGoMod()
-	}
+	// Update go.mod and especially go.sum if needed.
+	modload.WriteGoMod()
 }

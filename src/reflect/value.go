@@ -331,6 +331,7 @@ func (v Value) CanSet() bool {
 // type of the function's corresponding input parameter.
 // If v is a variadic function, Call creates the variadic slice parameter
 // itself, copying in the corresponding values.
+// 通过参数列表 in 调用 v 值所代表的函数（或方法
 func (v Value) Call(in []Value) []Value {
 	v.mustBe(Func)
 	v.mustBeExported()
@@ -344,6 +345,7 @@ func (v Value) Call(in []Value) []Value {
 // It returns the output results as Values.
 // As in Go, each input argument must be assignable to the
 // type of the function's corresponding input parameter.
+// 调用变参长度可变的函数
 func (v Value) CallSlice(in []Value) []Value {
 	v.mustBe(Func)
 	v.mustBeExported()
@@ -899,6 +901,7 @@ func (v Value) FieldByIndex(index []int) Value {
 // FieldByName returns the struct field with the given name.
 // It returns the zero Value if no field was found.
 // It panics if v's Kind is not struct.
+// 根据名称获取结构体的内部字段值
 func (v Value) FieldByName(name string) Value {
 	v.mustBe(Struct)
 	if f, ok := v.typ.FieldByName(name); ok {
@@ -935,6 +938,7 @@ var uint8Type = TypeOf(uint8(0)).(*rtype)
 
 // Index returns v's i'th element.
 // It panics if v's Kind is not Array, Slice, or String or i is out of range.
+// 返回切片、字符串、数组的索引 i 处的值
 func (v Value) Index(i int) Value {
 	switch v.kind() {
 	case Array:
@@ -981,6 +985,7 @@ func (v Value) Index(i int) Value {
 
 // Int returns v's underlying value, as an int64.
 // It panics if v's Kind is not Int, Int8, Int16, Int32, or Int64.
+// 用来获取 int 类型的值
 func (v Value) Int() int64 {
 	k := v.kind()
 	p := v.ptr
@@ -1365,6 +1370,7 @@ func (v Value) MethodByName(name string) Value {
 
 // NumField returns the number of fields in the struct v.
 // It panics if v's Kind is not Struct.
+// 用来获取结构体字段（成员）数量
 func (v Value) NumField() int {
 	v.mustBe(Struct)
 	tt := (*structType)(unsafe.Pointer(v.typ))
@@ -1654,6 +1660,7 @@ func (v Value) SetInt(x int64) {
 // SetLen sets v's length to n.
 // It panics if v's Kind is not Slice or if n is negative or
 // greater than the capacity of the slice.
+// 设置切片的 len 字段，如果类型不是切片，就会panic
 func (v Value) SetLen(n int) {
 	v.mustBeAssignable()
 	v.mustBe(Slice)
@@ -1667,6 +1674,7 @@ func (v Value) SetLen(n int) {
 // SetCap sets v's capacity to n.
 // It panics if v's Kind is not Slice or if n is smaller than the length or
 // greater than the capacity of the slice.
+// 设置切片的 cap 字段
 func (v Value) SetCap(n int) {
 	v.mustBeAssignable()
 	v.mustBe(Slice)
@@ -1683,6 +1691,7 @@ func (v Value) SetCap(n int) {
 // Otherwise if v holds a nil map, SetMapIndex will panic.
 // As in Go, key's elem must be assignable to the map's key type,
 // and elem's value must be assignable to the map's elem type.
+// 设置字典的 kv
 func (v Value) SetMapIndex(key, elem Value) {
 	v.mustBe(Map)
 	v.mustBeExported()
@@ -1895,6 +1904,7 @@ func (v Value) TryRecv() (x Value, ok bool) {
 // It panics if v's Kind is not Chan.
 // It reports whether the value was sent.
 // As in Go, x's value must be assignable to the channel's element type.
+// 尝试向通道发送数据（不会阻塞）
 func (v Value) TrySend(x Value) bool {
 	v.mustBe(Chan)
 	v.mustBeExported()

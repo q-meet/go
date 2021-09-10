@@ -142,6 +142,9 @@ func noteclear(n *note) {
 func notewakeup(n *note) {
 	var v uintptr
 	for {
+		// 设置 n.key = 1, 被唤醒的线程通过查看该值是否等于 1
+		// 来确定是被其它线程唤醒还是意外从睡眠中苏醒
+		// 如果该值为 1 则表示是被唤醒的，可以继续工作，但如果该值为 0 则表示是意外苏醒，需要再次进入睡眠。
 		v = atomic.Loaduintptr(&n.key)
 		if atomic.Casuintptr(&n.key, v, locked) {
 			break
@@ -163,6 +166,7 @@ func notewakeup(n *note) {
 }
 
 func notesleep(n *note) {
+	// g0
 	gp := getg()
 	if gp != gp.m.g0 {
 		throw("notesleep not on g0")
@@ -176,17 +180,22 @@ func notesleep(n *note) {
 		return
 	}
 	// Queued. Sleep.
+	// 表示 m 被阻塞
 	gp.m.blocked = true
 	if *cgo_yield == nil {
 		semasleep(-1)
 	} else {
 		// Sleep for an arbitrary-but-moderate interval to poll libc interceptors.
+
+		// 10e6 表示休眠 10e6
 		const ns = 10e6
 		for atomic.Loaduintptr(&n.key) == 0 {
 			semasleep(ns)
 			asmcgocall(*cgo_yield, nil)
 		}
 	}
+
+	// 被唤醒，更新标志
 	gp.m.blocked = false
 }
 

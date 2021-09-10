@@ -63,6 +63,7 @@ type Context interface {
 	// Deadline returns the time when work done on behalf of this context
 	// should be canceled. Deadline returns ok==false when no deadline is
 	// set. Successive calls to Deadline return the same results.
+	// 返回 context 是否会被取消以及自动取消时间（即 deadline）
 	Deadline() (deadline time.Time, ok bool)
 
 	// Done returns a channel that's closed when work done on behalf of this
@@ -96,6 +97,7 @@ type Context interface {
 	//
 	// See https://blog.golang.org/pipelines for more examples of how to use
 	// a Done channel for cancellation.
+	// 当 context 被取消或者到了 deadline，返回一个被关闭的 channel
 	Done() <-chan struct{}
 
 	// If Done is not yet closed, Err returns nil.
@@ -103,6 +105,7 @@ type Context interface {
 	// Canceled if the context was canceled
 	// or DeadlineExceeded if the context's deadline passed.
 	// After Err returns a non-nil error, successive calls to Err return the same error.
+	// 在 channel Done 关闭后，返回 context 取消原因
 	Err() error
 
 	// Value returns the value associated with this context for key, or nil
@@ -150,6 +153,7 @@ type Context interface {
 	// 		u, ok := ctx.Value(userKey).(*User)
 	// 		return u, ok
 	// 	}
+	// 获取 key 对应的 value
 	Value(key interface{}) interface{}
 }
 
@@ -248,6 +252,7 @@ var goroutines int32
 
 // propagateCancel arranges for child to be canceled when parent is.
 func propagateCancel(parent Context, child canceler) {
+	// 父节点是个空节点
 	done := parent.Done()
 	if done == nil {
 		return // parent is never canceled
@@ -261,20 +266,25 @@ func propagateCancel(parent Context, child canceler) {
 	default:
 	}
 
+	// 找到可以取消的父 context
 	if p, ok := parentCancelCtx(parent); ok {
 		p.mu.Lock()
 		if p.err != nil {
+			// 父节点已经被取消了，本节点（子节点）也要取消
 			// parent has already been canceled
 			child.cancel(false, p.err)
 		} else {
+			// 父节点未取消
 			if p.children == nil {
 				p.children = make(map[canceler]struct{})
 			}
+			// "挂到"父节点上
 			p.children[child] = struct{}{}
 		}
 		p.mu.Unlock()
 	} else {
 		atomic.AddInt32(&goroutines, +1)
+		// 如果没有找到可取消的父 context。新启动一个协程监控父节点或子节点取消信号
 		go func() {
 			select {
 			case <-parent.Done():
@@ -344,6 +354,7 @@ func init() {
 type cancelCtx struct {
 	Context
 
+	// 保护之后的字段
 	mu       sync.Mutex            // protects following fields
 	done     chan struct{}         // created lazily, closed by first cancel call
 	children map[canceler]struct{} // set to nil by the first cancel call
@@ -392,28 +403,36 @@ func (c *cancelCtx) String() string {
 // cancel closes c.done, cancels each of c's children, and, if
 // removeFromParent is true, removes c from its parent's children.
 func (c *cancelCtx) cancel(removeFromParent bool, err error) {
+	// 必须要传 err
 	if err == nil {
 		panic("context: internal error: missing cancel error")
 	}
 	c.mu.Lock()
+	// 已经被其他协程取消
 	if c.err != nil {
 		c.mu.Unlock()
 		return // already canceled
 	}
+	// 给 err 字段赋值
 	c.err = err
+	// 关闭 channel，通知其他协程
 	if c.done == nil {
 		c.done = closedchan
 	} else {
 		close(c.done)
 	}
+	// 遍历它的所有子节点
 	for child := range c.children {
 		// NOTE: acquiring the child's lock while holding parent's lock.
+		// 递归地取消所有子节点
 		child.cancel(false, err)
 	}
+	// 将子节点置空
 	c.children = nil
 	c.mu.Unlock()
 
 	if removeFromParent {
+		// 从父节点中移除自己
 		removeChild(c.Context, c)
 	}
 }
@@ -432,22 +451,30 @@ func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 		panic("cannot create context from nil parent")
 	}
 	if cur, ok := parent.Deadline(); ok && cur.Before(d) {
+		// 如果父节点 context 的 deadline 早于指定时间。直接构建一个可取消的 context。
+		// 原因是一旦父节点超时，自动调用 cancel 函数，子节点也会随之取消。
+		// 所以不用单独处理子节点的计时器时间到了之后，自动调用 cancel 函数
 		// The current deadline is already sooner than the new one.
 		return WithCancel(parent)
 	}
+	// 构建 timerCtx
 	c := &timerCtx{
 		cancelCtx: newCancelCtx(parent),
 		deadline:  d,
 	}
+	// 挂靠到父节点上
 	propagateCancel(parent, c)
+	// 计算当前距离 deadline 的时间
 	dur := time.Until(d)
 	if dur <= 0 {
+		// 直接取消
 		c.cancel(true, DeadlineExceeded) // deadline has already passed
 		return c, func() { c.cancel(false, Canceled) }
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.err == nil {
+		// d 时间后，timer 会自动调用 cancel 函数。自动取消
 		c.timer = time.AfterFunc(dur, func() {
 			c.cancel(true, DeadlineExceeded)
 		})
@@ -476,13 +503,16 @@ func (c *timerCtx) String() string {
 }
 
 func (c *timerCtx) cancel(removeFromParent bool, err error) {
+	// 直接调用 cancelCtx 的取消方法
 	c.cancelCtx.cancel(false, err)
 	if removeFromParent {
 		// Remove this timerCtx from its parent cancelCtx's children.
+		// 从父节点中删除子节点
 		removeChild(c.cancelCtx.Context, c)
 	}
 	c.mu.Lock()
 	if c.timer != nil {
+		// 关掉定时器，这样，在deadline 到来时，不会再次取消
 		c.timer.Stop()
 		c.timer = nil
 	}

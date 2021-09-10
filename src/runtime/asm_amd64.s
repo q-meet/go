@@ -86,22 +86,36 @@ GLOBL _rt0_amd64_lib_argv<>(SB),NOPTR, $8
 
 // Defined as ABIInternal since it does not use the stack-based Go ABI (and
 // in addition there are no calls to this entry point from Go code).
+// 这段代码完成之后，整个 Go 程序就可以跑起来了，是非常核心的代码。这一讲其实只讲到了第 80 行，也就是调度器初始化函数：
 TEXT runtime·rt0_go<ABIInternal>(SB),NOSPLIT,$0
 	// copy arguments forward on an even stack
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
 	SUBQ	$(4*8+7), SP		// 2args 2auto
+	// 调整栈顶寄存器使其按 16 字节对齐
 	ANDQ	$~15, SP
+    // argc 放在 SP+16 字节处
 	MOVQ	AX, 16(SP)
+    // argv 放在 SP+24 字节处
 	MOVQ	BX, 24(SP)
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
+	// 开始初始化 g0 的栈了。g0 栈的作用就是为运行 runtime 代码提供一个“环境”。
+    // 给 g0 分配栈空间
+    // 把 g0 的地址存入 DI
 	MOVQ	$runtime·g0(SB), DI
+    // BX = SP - 64*1024 + 104
+    // 将 SP 下移 (64K-104)B，并将地址存入 BX 寄存器
 	LEAQ	(-64*1024+104)(SP), BX
+    // g0.stackguard0 = SP - 64*1024 + 104
+    // 将 BX 里存储的地址赋给 g0.stackguard0
 	MOVQ	BX, g_stackguard0(DI)
+    // g0.stackguard1 = SP - 64*1024 + 104
 	MOVQ	BX, g_stackguard1(DI)
+    // g0.stack.lo = SP - 64*1024 + 104
 	MOVQ	BX, (g_stack+stack_lo)(DI)
+    // g0.stack.hi = SP
 	MOVQ	SP, (g_stack+stack_hi)(DI)
 
 	// find out information about the processor we're on
@@ -185,11 +199,16 @@ needtls:
 	// skip TLS setup on OpenBSD
 	JMP ok
 #endif
-
+    //如果需要在一个线程内部的各个函数调用都能访问、但其它线程不能访问的变量（被称为 static memory local to a thread，线程局部静态变量），就需要新的机制来实现。这就是 TLS。
+    // 初始化 m 的 tls
+    // DI = &m0.tls，取 m0 的 tls 成员的地址到 DI 寄存器
 	LEAQ	runtime·m0+m_tls(SB), DI
+    // 调用 settls 设置线程本地存储，settls 函数的参数在 DI 寄存器中
+    // 之后，可通过 fs 段寄存器找到 m.tls
 	CALL	runtime·settls(SB)
 
 	// store through it, to make sure it works
+    // 获取 fs 段基址并放入 BX 寄存器，其实就是 m0.tls[1] 的地址，get_tls 的代码由编译器生成
 	get_tls(BX)
 	MOVQ	$0x123, g(BX)
 	MOVQ	runtime·m0+m_tls(SB), AX
@@ -198,14 +217,20 @@ needtls:
 	CALL	runtime·abort(SB)
 ok:
 	// set the per-goroutine and per-mach "registers"
+    // 获取 fs 段基址到 BX 寄存器
 	get_tls(BX)
+    // 将 g0 的地址存储到 CX，CX = &g0
 	LEAQ	runtime·g0(SB), CX
+    // 把 g0 的地址保存在线程本地存储里面，也就是 m0.tls[0]=&g0
 	MOVQ	CX, g(BX)
+    // 将 m0 的地址存储到 AX，AX = &m0
 	LEAQ	runtime·m0(SB), AX
 
 	// save m->g0 = g0
+    // m0.g0 = &g0
 	MOVQ	CX, m_g0(AX)
 	// save m0 to g0->m
+    // g0.m = &m0
 	MOVQ	AX, g_m(CX)
 
 	CLD				// convention is D is always left cleared
@@ -215,19 +240,30 @@ ok:
 	MOVL	AX, 0(SP)
 	MOVQ	24(SP), AX		// copy argv
 	MOVQ	AX, 8(SP)
+    // 初始化执行文件的绝对路径
 	CALL	runtime·args(SB)
+    // 初始化系统核心数
 	CALL	runtime·osinit(SB)
+    // 调度器初始化
 	CALL	runtime·schedinit(SB)
 
 	// create a new goroutine to start program
+	// 创建一个新的 goroutine 来启动程序
 	MOVQ	$runtime·mainPC(SB), AX		// entry
+    // newproc 的第二个参数入栈，也就是新的 goroutine 需要执行的函数
+    // AX = &funcval{runtime·main},
 	PUSHQ	AX
+    // newproc 的第一个参数入栈，该参数表示 runtime.main 函数需要的参数大小，
+    // 因为 runtime.main 没有参数，所以这里是 0
 	PUSHQ	$0			// arg size
+    // 创建 main goroutine  新建一个 goroutine，该 goroutine 绑定 runtime.main，放在 P 的本地队列，等待调度
 	CALL	runtime·newproc(SB)
 	POPQ	AX
 	POPQ	AX
 
 	// start this M
+    // 主线程进入调度循环，运行刚刚创建的 goroutine
+    // 启动M，开始调度goroutine
 	CALL	runtime·mstart(SB)
 
 	CALL	runtime·abort(SB)	// mstart should never return
@@ -235,6 +271,7 @@ ok:
 
 	// Prevent dead-code elimination of debugCallV1, which is
 	// intended to be called by debuggers.
+    // 永远不会返回，万一返回了，crash 掉
 	MOVQ	$runtime·debugCallV1<ABIInternal>(SB), AX
 	RET
 
@@ -259,10 +296,14 @@ TEXT runtime·asminit(SB),NOSPLIT,$0-0
 // func gosave(buf *gobuf)
 // save state in Gobuf; setjmp
 TEXT runtime·gosave(SB), NOSPLIT, $0-8
+    // 将 gobuf 赋值给 AX
 	MOVQ	buf+0(FP), AX		// gobuf
+    // 取参数地址，也就是 caller 的 SP
 	LEAQ	buf+0(FP), BX		// caller's SP
+    // 保存 caller's SP，再次运行时的栈顶
 	MOVQ	BX, gobuf_sp(AX)
 	MOVQ	0(SP), BX		// caller's PC
+    // 保存 caller's PC，再次运行时的指令地址
 	MOVQ	BX, gobuf_pc(AX)
 	MOVQ	$0, gobuf_ret(AX)
 	MOVQ	BP, gobuf_bp(AX)
@@ -271,59 +312,109 @@ TEXT runtime·gosave(SB), NOSPLIT, $0-8
 	TESTQ	BX, BX
 	JZ	2(PC)
 	CALL	runtime·badctxt(SB)
+    // 获取 tls
 	get_tls(CX)
+    // 将 g 的地址存入 BX
 	MOVQ	g(CX), BX
+    // 保存 g 的地址
 	MOVQ	BX, gobuf_g(AX)
 	RET
 
 // func gogo(buf *gobuf)
 // restore state from Gobuf; longjmp
 TEXT runtime·gogo(SB), NOSPLIT, $16-8
+    // 0(FP) 表示第一个参数，即 buf = &gp.sched
 	MOVQ	buf+0(FP), BX		// gobuf
+    // DX = gp.sched.g
 	MOVQ	gobuf_g(BX), DX
 	MOVQ	0(DX), CX		// make sure g != nil
 	get_tls(CX)
+    // 将 g 放入到 tls[0]
+    // 把要运行的 g 的指针放入线程本地存储，这样后面的代码就可以通过线程本地存储
+    // 获取到当前正在执行的 goroutine 的 g 结构体对象，从而找到与之关联的 m 和 p
+    // 运行这条指令之前，线程本地存储存放的是 g0 的地址
 	MOVQ	DX, g(CX)
+    // 把 CPU 的 SP 寄存器设置为 sched.sp，完成了栈的切换
 	MOVQ	gobuf_sp(BX), SP	// restore SP
+    // 恢复调度上下文到CPU相关寄存器
 	MOVQ	gobuf_ret(BX), AX
 	MOVQ	gobuf_ctxt(BX), DX
 	MOVQ	gobuf_bp(BX), BP
-	MOVQ	$0, gobuf_sp(BX)	// clear to help garbage collector
+	// 清空 sched 的值，因为我们已把相关值放入 CPU 对应的寄存器了，不再需要，这样做可以少 GC 的工作量
+    MOVQ	$0, gobuf_sp(BX)	// clear to help garbage collector
 	MOVQ	$0, gobuf_ret(BX)
 	MOVQ	$0, gobuf_ctxt(BX)
 	MOVQ	$0, gobuf_bp(BX)
+    // 把 sched.pc 值放入 BX 寄存器
 	MOVQ	gobuf_pc(BX), BX
-	JMP	BX
+	// JMP 把 BX 寄存器的包含的地址值放入 CPU 的 IP 寄存器，于是，CPU 跳转到该地址继续执行指令
+    JMP	BX
 
 // func mcall(fn func(*g))
 // Switch to m->g0's stack, call fn(g).
 // Fn must never return. It should gogo(&g->sched)
 // to keep running g.
+// 切换到 g0 栈，执行 fn(g)
+// Fn 不能返回
 TEXT runtime·mcall(SB), NOSPLIT, $0-8
+    // 取出参数的值放入 DI 寄存器，它是 funcval 对象的指针，此场景中 fn.fn 是 goexit0 的地址
 	MOVQ	fn+0(FP), DI
 
+    // 将 tls 保存到 CX 寄存器
 	get_tls(CX)
+	// AX = g
+	// 当前线程指向的 goroutine （非 main goroutine，称为 gp）保存到 AX 寄存器
 	MOVQ	g(CX), AX	// save state in g->sched
+	// mcall 返回地址放入 BX
+	// 将调用者（调用 mcall 函数）的栈顶，这里就是 mcall 完成后的返回地址，存入 BX 寄存器。
 	MOVQ	0(SP), BX	// caller's PC
+	// g.sched.pc = BX，保存 g 的 PC
+	// 将 mcall 的返回地址保存到 gp 的 g.sched.pc 字段
 	MOVQ	BX, (g_sched+gobuf_pc)(AX)
+	//  将 gp 的栈顶，也就是 SP 保存到 BX 寄存器
 	LEAQ	fn+0(FP), BX	// caller's SP
+	// 保存 g 的 SP
+	// 将 SP 保存到 gp 的 g.sched.sp 字段
 	MOVQ	BX, (g_sched+gobuf_sp)(AX)
+	//  将 g 保存到 gp 的 g.sched.g 字段
 	MOVQ	AX, (g_sched+gobuf_g)(AX)
+	// 将 BP 保存 到 gp 的 g.sched.bp 字段。这一段主要是保存 gp 的调度信息
 	MOVQ	BP, (g_sched+gobuf_bp)(AX)
 
 	// switch to m->g0 & its stack, call fn
+	// 将当前指向的 g 保存到 BX 寄存器
 	MOVQ	g(CX), BX
+	// 将 g.m 字段保存到 BX 寄存器
 	MOVQ	g_m(BX), BX
+	// SI = g0
+	// 将 g.m.g0 字段保存到 SI，g.m.g0 就是当前工作线程的 g0。
 	MOVQ	m_g0(BX), SI
+
+	//现在，SI = g0， AX = gp
+	// 判断 gp 是否是 g0，如果 gp == g0 说明有问题，执行 runtime·badmcall。
+	// 正常情况下，PC 值加 3，跳过下面的两条指令，直接到达  MOVQ	SI, g(CX)。
 	CMPQ	SI, AX	// if g == m->g0 call badmcall
 	JNE	3(PC)
 	MOVQ	$runtime·badmcall(SB), AX
 	JMP	AX
+	// 把 g0 的地址设置到线程本地存储中
 	MOVQ	SI, g(CX)	// g = m->g0
+    // 从 g 的栈切换到了 g0 的栈D
+    // 将 g0.SP 设置到 CPU 的 SP 寄存器，这也就意味着我们从 gp 栈切换到了 g0 的栈，要变天了！
 	MOVQ	(g_sched+gobuf_sp)(SI), SP	// sp = m->g0->sched.sp
+	// AX = g，参数入栈
+	// 将参数 gp 入栈，为调用 goexit0 构造参数
 	PUSHQ	AX
+	//  将 DI 寄存器的内容设置到 DX 寄存器，DI 是结构体 funcval 实例对象的指针，它的第一个成员才是 goexit0 的地址
 	MOVQ	DI, DX
+    // DI 是结构体 funcval 实例对象的指针，它的第一个成员才是 goexit0 的地址
+    // 读取第一个成员到 DI 寄存器
+    // 读取 DI 第一成员，也就是 goexit0 函数的地址。
 	MOVQ	0(DI), DI
+    // 调用 goexit0(g)
+    // 调用 goexit0 函数，这已经是在 g0 栈上执行了，函数参数就是 gp。
+    // 到这里，就会去执行 goexit0 函数，注意，这里永远都不会返回。
+    // 所以，在 CALL 指令后面，如果返回了，又会去调用 runtime.badmcall2 函数去处理意外情况。
 	CALL	DI
 	POPQ	AX
 	MOVQ	$runtime·badmcall2(SB), AX
@@ -416,8 +507,11 @@ bad:
 TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	// Cannot grow scheduler stack (m->g0).
 	get_tls(CX)
+    // BX = g，g 表示 main goroutine
 	MOVQ	g(CX), BX
+    // BX = g.m
 	MOVQ	g_m(BX), BX
+    // SI = g.m.g0
 	MOVQ	m_g0(BX), SI
 	CMPQ	g(CX), SI
 	JNE	3(PC)
@@ -443,18 +537,29 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	MOVQ	SI, (m_morebuf+gobuf_g)(BX)
 
 	// Set g->sched to context in f.
+    // 将函数的返回地址保存到 AX 寄存器
 	MOVQ	0(SP), AX // f's PC
+    // 将函数的返回地址保存到 g.sched.pc
 	MOVQ	AX, (g_sched+gobuf_pc)(SI)
+    // g.sched.g = g
 	MOVQ	SI, (g_sched+gobuf_g)(SI)
+    // 取地址操作符，调用 morestack_noctxt 之前的 rsp
 	LEAQ	8(SP), AX // f's SP
+    // 将 main 函数的栈顶地址保存到 g.sched.sp
 	MOVQ	AX, (g_sched+gobuf_sp)(SI)
+    // 将 BP 寄存器保存到 g.sched.bp
 	MOVQ	BP, (g_sched+gobuf_bp)(SI)
 	MOVQ	DX, (g_sched+gobuf_ctxt)(SI)
 
 	// Call newstack on m->g0's stack.
+    // BX = g.m.g0
 	MOVQ	m_g0(BX), BX
+    // 将 g0 保存到本地存储 tls
 	MOVQ	BX, g(CX)
+    // 把 g0 栈的栈顶寄存器的值恢复到 CPU 的寄存器 SP，达到切换栈的目的，下面这一条指令执行之前，
+    // CPU 还是使用的调用此函数的 g 的栈，执行之后 CPU 就开始使用 g0 的栈了
 	MOVQ	(g_sched+gobuf_sp)(BX), SP
+    // 不返回
 	CALL	runtime·newstack(SB)
 	CALL	runtime·abort(SB)	// crash if newstack returns
 	RET

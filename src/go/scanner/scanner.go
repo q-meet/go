@@ -118,7 +118,10 @@ const (
 //
 // Note that Init may call err if there is an error in the first character
 // of the file.
-//
+//Init方法用于初始化扫描器，其中file参数表示当前的文件（不包含代码数据），
+//src参数表示要分析的代码，
+//err是用户自定义的错误处理函数，
+//mode可以控制是否扫描注释部分。
 func (s *Scanner) Init(file *token.File, src []byte, err ErrorHandler, mode Mode) {
 	// Explicitly initialize all fields since a scanner may be reused.
 	if file.Size() != len(src) {
@@ -778,7 +781,7 @@ func (s *Scanner) switch4(tok0, tok1 token.Token, ch2 rune, tok2, tok3 token.Tok
 // Scan adds line information to the file added to the file
 // set with Init. Token positions are relative to that file
 // and thus relative to the file set.
-//
+//Token的位置 、Token值和Token的源代码文本表示。
 func (s *Scanner) Scan() (pos token.Pos, tok token.Token, lit string) {
 scanAgain:
 	s.skipWhitespace()

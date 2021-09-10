@@ -533,10 +533,7 @@ func (ctxt *Link) loadlib() {
 	// up symbol by name may not get expected result.
 
 	iscgo = ctxt.LibraryByPkg["runtime/cgo"] != nil
-
-	// Plugins a require cgo support to function. Similarly, plugins may require additional
-	// internal linker support on some platforms which may not be implemented.
-	ctxt.canUsePlugins = ctxt.LibraryByPkg["plugin"] != nil && iscgo
+	ctxt.canUsePlugins = ctxt.LibraryByPkg["plugin"] != nil
 
 	// We now have enough information to determine the link mode.
 	determineLinkMode(ctxt)
@@ -1019,7 +1016,6 @@ var hostobj []Hostobj
 // These packages can use internal linking mode.
 // Others trigger external mode.
 var internalpkg = []string{
-	"crypto/internal/boring",
 	"crypto/x509",
 	"net",
 	"os/user",

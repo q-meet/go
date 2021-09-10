@@ -1688,7 +1688,6 @@ func TestAESCipherReordering(t *testing.T) {
 		preferServerCipherSuites bool
 		serverCiphers            []uint16
 		expectedCipher           uint16
-		boringExpectedCipher     uint16 // If non-zero, used when BoringCrypto is enabled.
 	}{
 		{
 			name: "server has hardware AES, client doesn't (pick ChaCha)",
@@ -1724,9 +1723,8 @@ func TestAESCipherReordering(t *testing.T) {
 				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 				TLS_RSA_WITH_AES_128_CBC_SHA,
 			},
-			serverHasAESGCM:      false,
-			expectedCipher:       TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			boringExpectedCipher: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, // When BoringCrypto is enabled, AES-GCM is prioritized even without server hardware.
+			serverHasAESGCM: false,
+			expectedCipher:  TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 		},
 		{
 			name: "client prefers AES-GCM, server has hardware AES (pick AES-GCM)",
@@ -1777,9 +1775,8 @@ func TestAESCipherReordering(t *testing.T) {
 				TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 				TLS_RSA_WITH_AES_128_CBC_SHA,
 			},
-			serverHasAESGCM:      false,
-			expectedCipher:       TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			boringExpectedCipher: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, // When BoringCrypto is enabled, AES-GCM is prioritized even without server hardware.
+			serverHasAESGCM: false,
+			expectedCipher:  TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 		},
 		{
 			name: "client supports multiple AES-GCM, server doesn't have hardware AES and doesn't support ChaCha (pick corrent AES-GCM)",
@@ -1823,12 +1820,8 @@ func TestAESCipherReordering(t *testing.T) {
 				t.Errorf("pickCipherSuite failed: %s", err)
 			}
 
-			want := tc.expectedCipher
-			if boringEnabled && tc.boringExpectedCipher != 0 {
-				want = tc.boringExpectedCipher
-			}
-			if want != hs.suite.id {
-				t.Errorf("unexpected cipher chosen: want %d, got %d", want, hs.suite.id)
+			if tc.expectedCipher != hs.suite.id {
+				t.Errorf("unexpected cipher chosen: want %d, got %d", tc.expectedCipher, hs.suite.id)
 			}
 		})
 	}
@@ -1844,7 +1837,6 @@ func TestAESCipherReordering13(t *testing.T) {
 		serverHasAESGCM          bool
 		preferServerCipherSuites bool
 		expectedCipher           uint16
-		boringExpectedCipher     uint16 // If non-zero, used when BoringCrypto is enabled.
 	}{
 		{
 			name: "server has hardware AES, client doesn't (pick ChaCha)",
@@ -1875,7 +1867,6 @@ func TestAESCipherReordering13(t *testing.T) {
 			serverHasAESGCM:          false,
 			preferServerCipherSuites: true,
 			expectedCipher:           TLS_CHACHA20_POLY1305_SHA256,
-			boringExpectedCipher:     TLS_AES_128_GCM_SHA256, // When BoringCrypto is enabled, AES-GCM is prioritized even without server hardware.
 		},
 		{
 			name: "client prefers AES and sends GREASE, server doesn't have hardware, prefer server ciphers (pick ChaCha)",
@@ -1887,7 +1878,6 @@ func TestAESCipherReordering13(t *testing.T) {
 			serverHasAESGCM:          false,
 			preferServerCipherSuites: true,
 			expectedCipher:           TLS_CHACHA20_POLY1305_SHA256,
-			boringExpectedCipher:     TLS_AES_128_GCM_SHA256, // When BoringCrypto is enabled, AES-GCM is prioritized even without server hardware.
 		},
 		{
 			name: "client prefers AES, server doesn't (pick ChaCha)",
@@ -1895,9 +1885,8 @@ func TestAESCipherReordering13(t *testing.T) {
 				TLS_AES_128_GCM_SHA256,
 				TLS_CHACHA20_POLY1305_SHA256,
 			},
-			serverHasAESGCM:      false,
-			expectedCipher:       TLS_CHACHA20_POLY1305_SHA256,
-			boringExpectedCipher: TLS_AES_128_GCM_SHA256, // When BoringCrypto is enabled, AES-GCM is prioritized even without server hardware.
+			serverHasAESGCM: false,
+			expectedCipher:  TLS_CHACHA20_POLY1305_SHA256,
 		},
 		{
 			name: "client prefers AES, server has hardware AES (pick AES)",
@@ -1944,12 +1933,8 @@ func TestAESCipherReordering13(t *testing.T) {
 				t.Errorf("pickCipherSuite failed: %s", err)
 			}
 
-			want := tc.expectedCipher
-			if boringEnabled && tc.boringExpectedCipher != 0 {
-				want = tc.boringExpectedCipher
-			}
-			if want != hs.suite.id {
-				t.Errorf("unexpected cipher chosen: want %d, got %d", want, hs.suite.id)
+			if tc.expectedCipher != hs.suite.id {
+				t.Errorf("unexpected cipher chosen: want %d, got %d", tc.expectedCipher, hs.suite.id)
 			}
 		})
 	}
